@@ -14,7 +14,7 @@ pub trait Message {
 }
 
 /// A message's header. Present in all messages.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Header {
     /// Identifies the originating network.
     magic: [u8; 4],
@@ -100,9 +100,8 @@ impl Header {
             .unwrap();
         current_byte += Self::COMMAND_NAME_WIDTH;
 
-        let payload_size: u32 = LittleEndian::read_u32(
-            &bytes[current_byte..current_byte + std::mem::size_of::<u32>()],
-        );
+        let payload_size: u32 =
+            LittleEndian::read_u32(&bytes[current_byte..current_byte + std::mem::size_of::<u32>()]);
         current_byte += std::mem::size_of::<u32>();
 
         let checksum: [u8; Self::CHECKSUM_WIDTH] = bytes
@@ -172,35 +171,16 @@ impl Header {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn assemble_test() {}
-}
-
 /// A serialized message that can be sent over the wire.
 pub fn generate_message<T: Message>(message: &T) -> Vec<u8> {
     let payload = message.payload();
     let header = Header::new(message.name(), payload.as_ref()).unwrap();
 
-    // todo: port to test.
-    // let testing = header.to_bytes();
-    // println!("header generated::: \n{:02x?}", testing);
-    // let testing2 = Header::from_bytes(&testing);
-    // let testing3 = testing2.to_bytes();
-    // if testing != testing3 {
-    //     eprintln!("not equal!!!!!!!!!!!")
-    // }
-
     let mut header_bytes = header.to_bytes();
 
     // message has a payload/body: append it after the header.
     if let Some(p) = payload {
-        // println!("payload:: {:02x?}", p);
         header_bytes.extend(p);
-        // println!("");
     }
     header_bytes
 }
@@ -364,5 +344,43 @@ impl Message for VerackMessage {
 
     fn payload(&self) -> Option<Vec<u8>> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddrV4;
+
+    use super::*;
+
+    fn version_msg_mock() -> VersionMessage {
+        let addr = "90.25.213.4:8333".parse::<SocketAddrV4>().unwrap();
+        let addr_bytes = addr.ip().to_ipv6_mapped().octets();
+
+        VersionMessage::new_with_defaults(addr_bytes, addr.port(), addr_bytes, addr.port())
+    }
+
+    #[test]
+    fn header_generation() {
+        let version_msg = version_msg_mock();
+        let header = Header::new(version_msg.name(), version_msg.payload().as_ref()).unwrap();
+        let cmd_name = [b'v', b'e', b'r', b's', b'i', b'o', b'n', 0, 0, 0, 0, 0];
+        assert_eq!(header.command_name, cmd_name);
+        assert_eq!(header.payload_size as usize, version_msg.payload().unwrap().len());
+    }
+
+    #[test]
+    fn header_serialization() {
+        // via property: encode->decode->encode.
+        let version_msg = version_msg_mock();
+        let header = Header::new(version_msg.name(), version_msg.payload().as_ref()).unwrap();
+
+        let encoded = header.to_bytes();
+        let deserialized_header = Header::from_bytes(&encoded);
+
+        assert_eq!(header, deserialized_header);
+
+        let second_encoding = deserialized_header.to_bytes();
+        assert_eq!(second_encoding, encoded);
     }
 }
