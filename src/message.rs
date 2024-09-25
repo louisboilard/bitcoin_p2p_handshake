@@ -10,7 +10,7 @@ pub trait Message {
     fn name(&self) -> &'static str;
 
     /// The message's payload, for messages that have one.
-    fn payload(&self) -> Option<Vec<u8>>;
+    fn payload(&self) -> Result<Option<Vec<u8>>, MessageError>;
 }
 
 /// A message's header. Present in all messages.
@@ -206,7 +206,7 @@ impl Header {
 
 /// A serialized message that can be sent over the wire.
 pub fn serialize_message<T: Message>(message: &T) -> Result<Vec<u8>, MessageError> {
-    let payload = message.payload();
+    let payload = message.payload()?;
     let header = Header::new(message.name(), payload.as_ref())?;
 
     let mut header_bytes = header.to_bytes()?;
@@ -309,48 +309,68 @@ impl Message for VersionMessage {
         "version"
     }
 
-    fn payload(&self) -> Option<Vec<u8>> {
+    fn payload(&self) -> Result<Option<Vec<u8>>, MessageError> {
         let mut payload: Vec<u8> = Vec::with_capacity(std::mem::size_of::<VersionMessage>()); // ; // todo, capacity.
 
-        payload.write_i32::<LittleEndian>(self.version).unwrap();
-        payload.write_u64::<LittleEndian>(self.service).unwrap();
-        payload.write_i64::<LittleEndian>(self.timestamp).unwrap();
+        payload
+            .write_i32::<LittleEndian>(self.version)
+            .map_err(|err| MessageError::Serialization(err))?;
+
+        payload
+            .write_u64::<LittleEndian>(self.service)
+            .map_err(|err| MessageError::Serialization(err))?;
+
+        payload
+            .write_i64::<LittleEndian>(self.timestamp)
+            .map_err(|err| MessageError::Serialization(err))?;
 
         // rx end
         payload
             .write_u64::<LittleEndian>(self.addr_recv_services)
-            .unwrap();
+            .map_err(|err| MessageError::Serialization(err))?;
         payload
             .write_u128::<BigEndian>(u128::from_ne_bytes(self.addr_recv_ip))
-            .unwrap();
-        payload.write_u16::<BigEndian>(self.addr_recv_port).unwrap();
+            .map_err(|err| MessageError::Serialization(err))?;
+        payload
+            .write_u16::<BigEndian>(self.addr_recv_port)
+            .map_err(|err| MessageError::Serialization(err))?;
 
         // tx end
         payload
             .write_u64::<LittleEndian>(self.addr_trans_services)
-            .unwrap();
+            .map_err(|err| MessageError::Serialization(err))?;
+
         payload
             .write_u128::<BigEndian>(u128::from_ne_bytes(self.addr_trans_ip))
-            .unwrap();
+            .map_err(|err| MessageError::Serialization(err))?;
+
         payload
             .write_u16::<BigEndian>(self.addr_trans_port)
-            .unwrap();
+            .map_err(|err| MessageError::Serialization(err))?;
 
-        payload.write_u64::<LittleEndian>(self.nonce).unwrap();
+        payload
+            .write_u64::<LittleEndian>(self.nonce)
+            .map_err(|err| MessageError::Serialization(err))?;
 
         if let Some(user) = &self.user_agent_str {
-            payload.write_u8(self.user_agent_bytes).unwrap();
-            payload.write_all(user.as_bytes()).unwrap();
+            payload
+                .write_u8(self.user_agent_bytes)
+                .map_err(|err| MessageError::Serialization(err))?;
+
+            payload
+                .write_all(user.as_bytes())
+                .map_err(|err| MessageError::Serialization(err))?;
         } else {
             // indicate that there are no user agent
             payload.push(0);
         }
         payload
             .write_i32::<LittleEndian>(self.start_height)
-            .unwrap();
-        payload.write_u8(self.relay.into()).unwrap();
+                .map_err(|err| MessageError::Serialization(err))?;
+        payload.write_u8(self.relay.into())
+                .map_err(|err| MessageError::Serialization(err))?;
 
-        Some(payload)
+        Ok(Some(payload))
     }
 }
 
@@ -374,8 +394,8 @@ impl Message for VerackMessage {
         "verack"
     }
 
-    fn payload(&self) -> Option<Vec<u8>> {
-        None
+    fn payload(&self) -> Result<Option<Vec<u8>>, MessageError> {
+        Ok(None)
     }
 }
 
@@ -395,12 +415,12 @@ mod tests {
     #[test]
     fn header_generation() {
         let version_msg = version_msg_mock();
-        let header = Header::new(version_msg.name(), version_msg.payload().as_ref()).unwrap();
+        let header = Header::new(version_msg.name(), version_msg.payload().unwrap().as_ref()).unwrap();
         let cmd_name = [b'v', b'e', b'r', b's', b'i', b'o', b'n', 0, 0, 0, 0, 0];
         assert_eq!(header.command_name, cmd_name);
         assert_eq!(
             header.payload_size as usize,
-            version_msg.payload().unwrap().len()
+            version_msg.payload().unwrap().unwrap().len()
         );
     }
 
@@ -408,7 +428,7 @@ mod tests {
     fn header_serialization() {
         // via property: encode->decode->encode.
         let version_msg = version_msg_mock();
-        let header = Header::new(version_msg.name(), version_msg.payload().as_ref()).unwrap();
+        let header = Header::new(version_msg.name(), version_msg.payload().unwrap().as_ref()).unwrap();
 
         let encoded = header.to_bytes().unwrap();
         let deserialized_header = Header::from_bytes(&encoded).unwrap();
