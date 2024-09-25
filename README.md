@@ -15,6 +15,10 @@ $ nslookup "dnsseed.bitcoin.dashjr.org"
 This is purely for testing/investigation purposes, but can be used as a base to
 expend on (i.e implement more functionalities of the p2p network).
 
+### Handshake
+
+The handshake has the following steps:
+
 1. Get peers from a dns seed (the list of ip's can be obtained with the
    makeseeds script or using the bitcoin seeder).
 2. Connect to a peer via tcp.
@@ -22,11 +26,3 @@ expend on (i.e implement more functionalities of the p2p network).
 4. Receive a "version" message from the peer.
 5. Send/Recv a "verack" message.
 6. Handshake is complete.
-
-
-### TODO:
-- tests
-- errors
-- handshake formalisms/state machine
-- validations
-- introduce tracing
