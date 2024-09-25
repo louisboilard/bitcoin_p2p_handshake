@@ -82,7 +82,7 @@ pub fn handshake(stream: &mut TcpStream) -> Result<(), String> {
         tx.port(),
     );
 
-    let bytes = serialize_message(&version);
+    let bytes = serialize_message(&version).unwrap();
     stream.write_all(&bytes).unwrap();
 
     let mut header_bytes: [u8; Header::HEADER_WIDTH] = [0; Header::HEADER_WIDTH];
@@ -92,7 +92,7 @@ pub fn handshake(stream: &mut TcpStream) -> Result<(), String> {
     stream.read_exact(&mut verack_bytes).unwrap();
 
     let verack = VerackMessage;
-    let ver_bytes = serialize_message(&verack);
+    let ver_bytes = serialize_message(&verack).unwrap();
     stream.write_all(&ver_bytes).unwrap();
 
     header_bytes = [0u8; Header::HEADER_WIDTH];

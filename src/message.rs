@@ -26,6 +26,15 @@ pub struct Header {
     checksum: [u8; 4],
 }
 
+#[derive(Debug)]
+pub enum MessageError {
+    InvalidCommandName(String),
+    PayloadOverSizeLimit(String),
+    Serialization(std::io::Error),
+    Deserialization,
+    HeaderFailedParsing(String),
+}
+
 impl Header {
     /// Total size of the header
     pub const HEADER_WIDTH: usize = 24;
@@ -42,7 +51,7 @@ impl Header {
 
     /// Generates the Header associated to a Command.
     // NOTE: The header is agnostic to the command/message itself.
-    fn new(command: &str, payload: Option<&Vec<u8>>) -> Result<Self, String> {
+    fn new(command: &str, payload: Option<&Vec<u8>>) -> Result<Self, MessageError> {
         let command_name = Self::command_name_from_str(command)?;
 
         let mut checksum = Self::EMPTY_CHECKSUM;
@@ -50,11 +59,11 @@ impl Header {
 
         if let Some(payload) = payload {
             if payload.len() > Self::MAX_PAYLOAD_WIDTH {
-                return Err(format!(
+                return Err(MessageError::PayloadOverSizeLimit(format!(
                     "Payload of size {} is bigger than max: {}.",
                     payload.len(),
                     Self::MAX_PAYLOAD_WIDTH
-                ));
+                )));
             }
             payload_size = payload.len() as u32;
             checksum = Self::checksum_from_payload(&payload);
@@ -71,33 +80,53 @@ impl Header {
     }
 
     /// Generates bytes from a header
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MessageError> {
         let mut serialized_header = Vec::with_capacity(std::mem::size_of::<Header>()); //
-        serialized_header.write_all(&self.magic).unwrap();
-        serialized_header.write_all(&self.command_name).unwrap();
+
+        serialized_header
+            .write_all(&self.magic)
+            .map_err(|err| MessageError::Serialization(err))?;
+
+        serialized_header
+            .write_all(&self.command_name)
+            .map_err(|err| MessageError::Serialization(err))?;
+
         serialized_header
             .write_u32::<LittleEndian>(self.payload_size)
-            .unwrap();
-        serialized_header.write_all(&self.checksum).unwrap();
+            .map_err(|err| MessageError::Serialization(err))?;
+
         serialized_header
+            .write_all(&self.checksum)
+            .map_err(|err| MessageError::Serialization(err))?;
+
+        Ok(serialized_header)
     }
 
     /// Generates a Header from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, MessageError> {
         if bytes.len() > Header::HEADER_WIDTH {
-            panic!("too small!");
+            let err = format!(
+                "Can't generate header from byte slice of len {} which is smaller than the min {}.",
+                bytes.len(),
+                Header::HEADER_WIDTH
+            );
+            tracing::error!(err);
+            return Err(MessageError::HeaderFailedParsing(err));
         }
 
         let mut current_byte: usize = 0;
 
-        let magic: [u8; Self::MAGIC_WIDTH] =
-            bytes[current_byte..Self::MAGIC_WIDTH].try_into().unwrap();
+        let magic: [u8; Self::MAGIC_WIDTH] = bytes[current_byte..Self::MAGIC_WIDTH]
+            .try_into()
+            .map_err(|_| MessageError::Deserialization)?;
+
         current_byte += Self::MAGIC_WIDTH;
 
         let command_name: [u8; Self::COMMAND_NAME_WIDTH] = bytes
             [current_byte..current_byte + Self::COMMAND_NAME_WIDTH]
             .try_into()
-            .unwrap();
+            .map_err(|_| MessageError::Deserialization)?;
+
         current_byte += Self::COMMAND_NAME_WIDTH;
 
         let payload_size: u32 =
@@ -107,40 +136,44 @@ impl Header {
         let checksum: [u8; Self::CHECKSUM_WIDTH] = bytes
             [current_byte..current_byte + Header::CHECKSUM_WIDTH]
             .try_into()
-            .unwrap();
-
+            .map_err(|_| MessageError::Deserialization)?;
         current_byte += Self::CHECKSUM_WIDTH;
-        assert!(current_byte == Self::HEADER_WIDTH);
 
-        println!(
+        if current_byte != Self::HEADER_WIDTH {
+            return Err(MessageError::HeaderFailedParsing(
+                "Unexpected number of bytes in header.".to_owned(),
+            ));
+        }
+
+        tracing::debug!(
             "command received:::: {:?}",
             String::from_utf8_lossy(&command_name)
         );
 
-        Self {
+        Ok(Self {
             magic,
             command_name,
             payload_size,
             checksum,
-        }
+        })
     }
 
     /// Generates a [u8; 12] from an ascii string, padding with 0s when needed.
-    fn command_name_from_str(name: &str) -> Result<[u8; 12], String> {
+    fn command_name_from_str(name: &str) -> Result<[u8; 12], MessageError> {
         const NAME_LEN: usize = 12;
 
         if !name.is_ascii() {
-            return Err(format!(
+            return Err(MessageError::InvalidCommandName(format!(
                 "Name: {name} should only contain ASCII characters.",
-            ));
+            )));
         }
 
         if name.len() > NAME_LEN {
-            return Err(format!(
+            return Err(MessageError::InvalidCommandName(format!(
                 "Name: {name} has length {} which is more than the allowed max {}.",
                 name.len(),
                 NAME_LEN
-            ));
+            )));
         }
 
         let mut formatted_name: [u8; NAME_LEN] = [0; NAME_LEN];
@@ -172,17 +205,17 @@ impl Header {
 }
 
 /// A serialized message that can be sent over the wire.
-pub fn serialize_message<T: Message>(message: &T) -> Vec<u8> {
+pub fn serialize_message<T: Message>(message: &T) -> Result<Vec<u8>, MessageError> {
     let payload = message.payload();
-    let header = Header::new(message.name(), payload.as_ref()).unwrap();
+    let header = Header::new(message.name(), payload.as_ref())?;
 
-    let mut header_bytes = header.to_bytes();
+    let mut header_bytes = header.to_bytes()?;
 
     // message has a payload/body: append it after the header.
     if let Some(p) = payload {
         header_bytes.extend(p);
     }
-    header_bytes
+    Ok(header_bytes)
 }
 
 #[derive(Debug)]
@@ -273,7 +306,6 @@ impl VersionMessage {
 
 impl Message for VersionMessage {
     fn name(&self) -> &'static str {
-        // [b'v', b'e', b'r', b's', b'i', b'o', b'n', b'0', b'0', b'0', b'0', b'0']
         "version"
     }
 
@@ -366,7 +398,10 @@ mod tests {
         let header = Header::new(version_msg.name(), version_msg.payload().as_ref()).unwrap();
         let cmd_name = [b'v', b'e', b'r', b's', b'i', b'o', b'n', 0, 0, 0, 0, 0];
         assert_eq!(header.command_name, cmd_name);
-        assert_eq!(header.payload_size as usize, version_msg.payload().unwrap().len());
+        assert_eq!(
+            header.payload_size as usize,
+            version_msg.payload().unwrap().len()
+        );
     }
 
     #[test]
@@ -375,12 +410,12 @@ mod tests {
         let version_msg = version_msg_mock();
         let header = Header::new(version_msg.name(), version_msg.payload().as_ref()).unwrap();
 
-        let encoded = header.to_bytes();
-        let deserialized_header = Header::from_bytes(&encoded);
+        let encoded = header.to_bytes().unwrap();
+        let deserialized_header = Header::from_bytes(&encoded).unwrap();
 
         assert_eq!(header, deserialized_header);
 
-        let second_encoding = deserialized_header.to_bytes();
+        let second_encoding = deserialized_header.to_bytes().unwrap();
         assert_eq!(second_encoding, encoded);
     }
 }
