@@ -1,7 +1,9 @@
-use std::fmt;
+use std::{error::Error, fmt, io::Write, net::TcpStream};
+
+use crate::message::{serialize_message, MessageError, VersionMessage};
 
 /// States the handshake goes through (post connection).
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum State {
     Init,
     SendVersion,
@@ -42,17 +44,46 @@ impl State {
 impl fmt::Display for State {
     // relies on the fact that State implements Debug
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Self::Init => write!(f, "Initial state"),
+            Self::SendVersion => write!(f, "Sending Version Message"),
+            Self::RecvVersion => write!(f, "Receiving Version Message"),
+            Self::ValidateVersion => write!(f, "Validating Version Message"),
+            Self::SendAck => write!(f, "Sending Ack Message"),
+            Self::RecvAck => write!(f, "Receiving Ack Message"),
+            Self::ValidateAck => write!(f, "Validating Ack Message"),
+            Self::Complete => write!(f, "Handshake completed"),
+        }
     }
 }
 
 #[derive(Debug)]
+/// Top level error, injecting state level context.
 pub enum HandshakeError {
-    First,
+    /// An error that happened at the message layer.
+    MessageError(State, MessageError),
+    /// IO related errors.
+    IOError(State, std::io::Error),
 }
 
+/// Top level error, injecting state level context.
+
+impl fmt::Display for HandshakeError {
+    // NOTE: Relies on the fact that HandshakeError implements Debug
+    // and that State implements display.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::MessageError(state, err) => write!(f, "Message Error: {} {}", state, err),
+            Self::IOError(state, err) => write!(f, "IO Error: {} {}", state, err),
+        }
+    }
+}
+impl Error for HandshakeError {}
+
+/// Handshake
 #[derive(Debug)]
 pub struct Handshake {
+    /// The current state
     state: State,
 }
 
@@ -73,6 +104,62 @@ impl Handshake {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn step(&mut self) -> Result<(), HandshakeError> {
+        match self.state {
+            State::Init => {
+                self.send_version()?;
+                self.state = State::SendVersion
+            }
+            State::SendVersion => self.state = State::RecvVersion,
+            State::RecvVersion => self.state = State::ValidateVersion,
+            State::ValidateVersion => self.state = State::SendAck,
+            State::SendAck => self.state = State::RecvAck,
+            State::RecvAck => self.state = State::ValidateAck,
+            State::ValidateAck => self.state = State::Complete,
+            State::Complete => self.state = State::Complete,
+        }
+        Ok(())
+    }
+
+    /// Builds and send the "version" message
+    fn send_version(&mut self) -> Result<(), HandshakeError> {
+
+        let rx = self.stream.local_addr()
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
+
+        let tx = self.stream.peer_addr()
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
+
+        let rx_ip = match rx.ip() {
+            std::net::IpAddr::V4(ip) => ip.to_ipv6_mapped(),
+            std::net::IpAddr::V6(ip) => ip,
+        }
+        .octets();
+
+        let tx_ip = match tx.ip() {
+            std::net::IpAddr::V4(ip) => ip.to_ipv6_mapped(),
+            std::net::IpAddr::V6(ip) => ip,
+        }
+        .octets();
+
+        let version = VersionMessage::new_with_defaults(
+            tx_ip,
+            // u16::to_be(rx.port()),
+            rx.port(),
+            rx_ip,
+            // u16::to_be(tx.port()),
+            tx.port(),
+        );
+
+        let bytes = serialize_message(&version)
+            .map_err(|err| HandshakeError::MessageError(self.state, err))?;
+
+        self.stream.write_all(&bytes)
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
         Ok(())
     }
 }

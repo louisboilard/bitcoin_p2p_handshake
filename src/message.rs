@@ -2,7 +2,7 @@ use crate::BTC_PROTO_VERSION;
 use byteorder::{BigEndian, ByteOrder, LittleEndian, WriteBytesExt};
 use core::str;
 use sha2::{Digest, Sha256};
-use std::{io::Write, time::SystemTime};
+use std::{error::Error, fmt, io::Write, time::SystemTime};
 
 /// Defines the messages transmitted to a peer during the handshake.
 pub trait Message {
@@ -34,6 +34,21 @@ pub enum MessageError {
     Deserialization,
     HeaderFailedParsing(String),
 }
+
+impl fmt::Display for MessageError {
+    // relies on the fact that MessageError implements Debug
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::InvalidCommandName(err) => write!(f, "Invalid command name: {}", err),
+            Self::PayloadOverSizeLimit(err) => write!(f, "Payload is too big: {}", err),
+            Self::Serialization(err) => write!(f, "Serialization error: {}", err),
+            Self::Deserialization => write!(f, "Deserialization error"),
+            Self::HeaderFailedParsing(err) => write!(f, "Could not parse header: {}", err),
+        }
+    }
+}
+
+impl Error for MessageError {}
 
 impl Header {
     /// Total size of the header
