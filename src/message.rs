@@ -172,7 +172,7 @@ impl Header {
 }
 
 /// A serialized message that can be sent over the wire.
-pub fn generate_message<T: Message>(message: &T) -> Vec<u8> {
+pub fn serialize_message<T: Message>(message: &T) -> Vec<u8> {
     let payload = message.payload();
     let header = Header::new(message.name(), payload.as_ref()).unwrap();
 
