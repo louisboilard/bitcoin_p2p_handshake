@@ -13,19 +13,6 @@ pub trait Message {
     fn payload(&self) -> Result<Option<Vec<u8>>, MessageError>;
 }
 
-/// A message's header. Present in all messages.
-#[derive(Debug, PartialEq)]
-pub struct Header {
-    /// Identifies the originating network.
-    magic: [u8; 4],
-    /// ASCII strings that identifies the message's type. Padded with 0s.
-    command_name: [u8; 12],
-    /// Width of the payload, max of 32MiB.
-    payload_size: u32,
-    /// First 4 bytes of SHA256(SHA256(payload)).
-    checksum: [u8; 4],
-}
-
 #[derive(Debug)]
 pub enum MessageError {
     InvalidCommandName(String),
@@ -50,6 +37,20 @@ impl fmt::Display for MessageError {
 
 impl Error for MessageError {}
 
+
+/// A message's header. Present in all messages.
+#[derive(Debug, PartialEq)]
+pub struct Header {
+    /// Identifies the originating network.
+    magic: [u8; 4],
+    /// ASCII strings that identifies the message's type. Padded with 0s.
+    command_name: [u8; 12],
+    /// Width of the payload, max of 32MiB.
+    payload_size: u32,
+    /// First 4 bytes of SHA256(SHA256(payload)).
+    checksum: [u8; 4],
+}
+
 impl Header {
     /// Total size of the header
     pub const HEADER_WIDTH: usize = 24;
@@ -63,6 +64,10 @@ impl Header {
 
     // const MAGIC_TESTNET: [u8; 4] = [0x0b, 0x11, 0x09, 0x07];
     const MAGIC_MAINNET: [u8; Self::MAGIC_WIDTH] = [0xf9, 0xbe, 0xb4, 0xd9];
+
+    pub fn get_payload_size(&self) -> u32 {
+        self.payload_size
+    }
 
     /// Generates the Header associated to a Command.
     // NOTE: The header is agnostic to the command/message itself.

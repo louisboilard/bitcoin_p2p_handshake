@@ -1,6 +1,6 @@
-use std::{error::Error, fmt, io::Write, net::TcpStream};
+use std::{error::Error, fmt, io::Read, io::Write, net::TcpStream};
 
-use crate::message::{serialize_message, MessageError, VersionMessage};
+use crate::message::{serialize_message, Header, MessageError, VersionMessage};
 
 /// States the handshake goes through (post connection).
 #[derive(Debug, Clone, Copy)]
@@ -67,7 +67,6 @@ pub enum HandshakeError {
 }
 
 /// Top level error, injecting state level context.
-
 impl fmt::Display for HandshakeError {
     // NOTE: Relies on the fact that HandshakeError implements Debug
     // and that State implements display.
@@ -85,14 +84,20 @@ impl Error for HandshakeError {}
 pub struct Handshake {
     /// The current state
     state: State,
+    /// A tcp stream between a local and remote socket
+    /// on which the handshake will happen.
+    stream: TcpStream,
 }
 
 impl Handshake {
-    pub fn new() -> Self {
+    /// Constructs and initializes the handshake that will be attempted on
+    /// the given TcpStream.
+    pub fn new(stream: TcpStream) -> Self {
         let state = State::new();
-        Self { state }
+        Self { state, stream }
     }
 
+    /// Attempts to run an handshake to completion.
     pub fn handshake(&mut self) -> Result<(), HandshakeError> {
         while let Some(state_result) = self.next() {
             match state_result {
@@ -114,7 +119,10 @@ impl Handshake {
                 self.send_version()?;
                 self.state = State::SendVersion
             }
-            State::SendVersion => self.state = State::RecvVersion,
+            State::SendVersion => {
+                self.read_version()?;
+                self.state = State::RecvVersion
+            }
             State::RecvVersion => self.state = State::ValidateVersion,
             State::ValidateVersion => self.state = State::SendAck,
             State::SendAck => self.state = State::RecvAck,
@@ -127,11 +135,14 @@ impl Handshake {
 
     /// Builds and send the "version" message
     fn send_version(&mut self) -> Result<(), HandshakeError> {
-
-        let rx = self.stream.local_addr()
+        let rx = self
+            .stream
+            .local_addr()
             .map_err(|err| HandshakeError::IOError(self.state, err))?;
 
-        let tx = self.stream.peer_addr()
+        let tx = self
+            .stream
+            .peer_addr()
             .map_err(|err| HandshakeError::IOError(self.state, err))?;
 
         let rx_ip = match rx.ip() {
@@ -158,7 +169,26 @@ impl Handshake {
         let bytes = serialize_message(&version)
             .map_err(|err| HandshakeError::MessageError(self.state, err))?;
 
-        self.stream.write_all(&bytes)
+        self.stream
+            .write_all(&bytes)
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
+        Ok(())
+    }
+
+    fn read_version(&mut self) -> Result<(), HandshakeError> {
+        let mut header_bytes: [u8; Header::HEADER_WIDTH] = [0; Header::HEADER_WIDTH];
+        self.stream
+            .read_exact(&mut header_bytes)
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
+
+        let header = Header::from_bytes(&header_bytes)
+            .map_err(|err| HandshakeError::MessageError(self.state, err))?;
+
+        let message_width = header.get_payload_size() as usize;
+
+        let mut verack_bytes: Vec<u8> = Vec::with_capacity(message_width);
+        self.stream
+            .read_exact(&mut verack_bytes[..message_width])
             .map_err(|err| HandshakeError::IOError(self.state, err))?;
         Ok(())
     }
@@ -176,7 +206,7 @@ impl Iterator for Handshake {
 
         // Step
         // todo: handle the errors here, whenever there's an error here we need to bubble it up.
-        self.state.next();
+        self.step();
         None
     }
 }

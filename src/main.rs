@@ -56,7 +56,7 @@ fn main() {
     }
 }
 
-/// Attempts dandshaking a peer.
+/// Attempts handshaking a peer.
 pub fn handshake(stream: &mut TcpStream) -> Result<(), String> {
     let rx = stream.local_addr().unwrap();
     let tx = stream.peer_addr().unwrap();
