@@ -209,30 +209,47 @@ pub fn serialize_message<T: Message>(message: &T) -> Result<Vec<u8>, MessageErro
     let payload = message.payload()?;
     let header = Header::new(message.name(), payload.as_ref())?;
 
-    let mut header_bytes = header.to_bytes()?;
+    let mut serialized_message = header.to_bytes()?;
 
     // message has a payload/body: append it after the header.
     if let Some(p) = payload {
-        header_bytes.extend(p);
+        serialized_message.extend(p);
     }
-    Ok(header_bytes)
+    Ok(serialized_message)
 }
 
+/// The first and primary messages in the handshake.
 #[derive(Debug)]
 pub struct VersionMessage {
+    /// The highest protocol version understood by the transmitting node
     version: i32,
+    /// The services supported by the transmitting node encoded as a bitfield
     service: u64,
+    /// The current Unix epoch time according to the transmitting node’s clock
     timestamp: i64,
+    /// The services supported by the receiving node as perceived by the transmitting node
     addr_recv_services: u64,
+    /// The IPv6 address of the receiving node as perceived by the transmitting node
     addr_recv_ip: [u8; 16], // Note: big endian
-    addr_recv_port: u16,    // Note: big endian,
+    /// The port number of the receiving node as perceived by the transmitting node
+    addr_recv_port: u16, // Note: big endian,
+    /// The services supported by the transmitting node
     addr_trans_services: u64,
+    /// The port number of the transmitting node as perceived by the transmitting node
     addr_trans_ip: [u8; 16], // Note: big endian,
-    addr_trans_port: u16,    // Note: big endian,
+    /// The port number of the transmitting node
+    addr_trans_port: u16, // Note: big endian,
+    /// A random nonce which can help a node detect a connection to itself.
+    /// If the nonce is 0, the nonce field is ignored
     nonce: u64,
+    /// Number of bytes in following user_agent field.
+    /// If 0x00, no user agent field is sent.
     user_agent_bytes: u8,
+    /// The user agent itself.
     user_agent_str: Option<String>,
+    /// The height of the transmitting node’s best block chain
     start_height: i32,
+    /// Transaction relay flag
     relay: bool,
 }
 
@@ -366,9 +383,10 @@ impl Message for VersionMessage {
         }
         payload
             .write_i32::<LittleEndian>(self.start_height)
-                .map_err(|err| MessageError::Serialization(err))?;
-        payload.write_u8(self.relay.into())
-                .map_err(|err| MessageError::Serialization(err))?;
+            .map_err(|err| MessageError::Serialization(err))?;
+        payload
+            .write_u8(self.relay.into())
+            .map_err(|err| MessageError::Serialization(err))?;
 
         Ok(Some(payload))
     }
@@ -415,7 +433,8 @@ mod tests {
     #[test]
     fn header_generation() {
         let version_msg = version_msg_mock();
-        let header = Header::new(version_msg.name(), version_msg.payload().unwrap().as_ref()).unwrap();
+        let header =
+            Header::new(version_msg.name(), version_msg.payload().unwrap().as_ref()).unwrap();
         let cmd_name = [b'v', b'e', b'r', b's', b'i', b'o', b'n', 0, 0, 0, 0, 0];
         assert_eq!(header.command_name, cmd_name);
         assert_eq!(
@@ -428,7 +447,8 @@ mod tests {
     fn header_serialization() {
         // via property: encode->decode->encode.
         let version_msg = version_msg_mock();
-        let header = Header::new(version_msg.name(), version_msg.payload().unwrap().as_ref()).unwrap();
+        let header =
+            Header::new(version_msg.name(), version_msg.payload().unwrap().as_ref()).unwrap();
 
         let encoded = header.to_bytes().unwrap();
         let deserialized_header = Header::from_bytes(&encoded).unwrap();
