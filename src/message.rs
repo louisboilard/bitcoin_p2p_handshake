@@ -130,7 +130,6 @@ impl Header {
                 bytes.len(),
                 Header::HEADER_WIDTH
             );
-            tracing::error!(err);
             return Err(MessageError::HeaderFailedParsing(err));
         }
 
@@ -166,7 +165,7 @@ impl Header {
         }
 
         tracing::debug!(
-            "command received:::: {:?}",
+            "command received: {:?}",
             String::from_utf8_lossy(&command_name)
         );
 
@@ -184,13 +183,13 @@ impl Header {
 
         if !name.is_ascii() {
             return Err(MessageError::InvalidCommandName(format!(
-                "Name: {name} should only contain ASCII characters.",
+                "command: '{name}' should only contain ASCII characters.",
             )));
         }
 
         if name.len() > NAME_LEN {
             return Err(MessageError::InvalidCommandName(format!(
-                "Name: {name} has length {} which is more than the allowed max {}.",
+                "name: '{name}' has length {} which is more than the allowed max {}.",
                 name.len(),
                 NAME_LEN
             )));
