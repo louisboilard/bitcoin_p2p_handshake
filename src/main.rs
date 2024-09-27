@@ -1,10 +1,7 @@
-use btc_hs::message::*;
 use btc_hs::*;
 use clap::Parser;
-use std::{
-    io::{Read, Write},
-    net::{TcpStream, ToSocketAddrs},
-};
+use handshake::Handshake;
+use std::net::{TcpStream, ToSocketAddrs};
 
 #[derive(Parser)]
 #[command(version, about = "Btc Handshake Implementation", long_about = None)]
@@ -22,15 +19,16 @@ struct Cli {
     btc_proto: bool,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     if cli.btc_proto {
         println!(
             "This implementation supports the p2p network protocol {}.",
             BTC_PROTO_VERSION
         );
-        return;
+        return Ok(());
     }
+
     tracing_subscriber::fmt::init();
 
     let dns = cli.dns_seed + ":" + &cli.port.to_string();
@@ -44,59 +42,27 @@ fn main() {
     tracing::debug!("addresses {:?}", addresses);
 
     match TcpStream::connect(&addresses.as_slice()[..]) {
-        Ok(mut stream) => {
-            tracing::info!("Connected to: {:?}", stream.peer_addr().unwrap());
-            handshake(&mut stream).unwrap();
-            tracing::info!("Handshake with {:?} completed.", stream.peer_addr().unwrap());
-            stream.shutdown(std::net::Shutdown::Both).unwrap();
+        Ok(stream) => {
+            let peer = stream.peer_addr()?;
+            tracing::info!("Connected to: {:?}", peer);
+
+            let mut handshake = Handshake::new(&stream);
+            let handshake_result = handshake.process();
+            match handshake_result {
+                Ok(_) => {
+                    tracing::info!("Handshake with {:?} completed.", peer);
+                }
+                Err(ref e) => {
+                    tracing::error!("Handshake with {:?} failed. {}", peer, e);
+                }
+            }
+            stream.shutdown(std::net::Shutdown::Both)?;
+            handshake_result?
         }
         Err(e) => {
             tracing::error!("Could not connect to any of the resolved addresses. {}", e);
+            return Err(e.into());
         }
     }
-}
-
-/// Attempts handshaking a peer.
-pub fn handshake(stream: &mut TcpStream) -> Result<(), String> {
-    let rx = stream.local_addr().unwrap();
-    let tx = stream.peer_addr().unwrap();
-
-    let rx_ip = match rx.ip() {
-        std::net::IpAddr::V4(ip) => ip.to_ipv6_mapped(),
-        std::net::IpAddr::V6(ip) => ip,
-    }
-    .octets();
-
-    let tx_ip = match tx.ip() {
-        std::net::IpAddr::V4(ip) => ip.to_ipv6_mapped(),
-        std::net::IpAddr::V6(ip) => ip,
-    }
-    .octets();
-
-    let version = VersionMessage::new_with_defaults(
-        tx_ip,
-        // u16::to_be(rx.port()),
-        rx.port(),
-        rx_ip,
-        // u16::to_be(tx.port()),
-        tx.port(),
-    );
-
-    let bytes = serialize_message(&version).unwrap();
-    stream.write_all(&bytes).unwrap();
-
-    let mut header_bytes: [u8; Header::HEADER_WIDTH] = [0; Header::HEADER_WIDTH];
-    stream.read_exact(&mut header_bytes).unwrap();
-
-    let mut verack_bytes: [u8; 103] = [0u8; 103];
-    stream.read_exact(&mut verack_bytes).unwrap();
-
-    let verack = VerackMessage;
-    let ver_bytes = serialize_message(&verack).unwrap();
-    stream.write_all(&ver_bytes).unwrap();
-
-    header_bytes = [0u8; Header::HEADER_WIDTH];
-    stream.read_exact(&mut header_bytes).unwrap();
-
     Ok(())
 }
