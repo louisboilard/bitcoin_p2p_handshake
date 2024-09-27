@@ -57,7 +57,9 @@ impl fmt::Display for HandshakeError {
     // and that State implements display.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::MessageError(state, err) => write!(f, "Message Error: State: {}. err: {}.", state, err),
+            Self::MessageError(state, err) => {
+                write!(f, "Message Error: State: {}. err: {}.", state, err)
+            }
             Self::IOError(state, err) => write!(f, "IO Error: State: {}. err: {}.", state, err),
         }
     }
@@ -112,11 +114,11 @@ impl<'a> Handshake<'a> {
             State::ValidateVersion => {
                 self.send_verack()?;
                 self.state = State::SendAck
-            },
+            }
             State::SendAck => {
                 self.read_verack()?;
                 self.state = State::RecvAck
-            },
+            }
             State::RecvAck => self.state = State::ValidateAck,
             State::ValidateAck => self.state = State::Complete,
             State::Complete => self.state = State::Complete,
@@ -127,7 +129,8 @@ impl<'a> Handshake<'a> {
     fn read_verack(&mut self) -> Result<(), HandshakeError> {
         let mut header_bytes = [0u8; Header::HEADER_WIDTH];
 
-        self.stream.read_exact(&mut header_bytes)
+        self.stream
+            .read_exact(&mut header_bytes)
             .map_err(|err| HandshakeError::IOError(self.state, err))?;
 
         Ok(())

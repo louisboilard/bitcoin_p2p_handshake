@@ -37,7 +37,6 @@ impl fmt::Display for MessageError {
 
 impl Error for MessageError {}
 
-
 /// A message's header. Present in all messages.
 #[derive(Debug, PartialEq)]
 pub struct Header {

@@ -2,8 +2,8 @@
 
 //! Implementation of the bitcoin p2p network handshake for BTC_PROTO_VERSION.
 
-pub mod message;
 pub mod handshake;
+pub mod message;
 
 /// Testnet default port
 pub const TEST_NET_PORT: u16 = 18333;
