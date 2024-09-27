@@ -272,6 +272,7 @@ pub struct VersionMessage {
 }
 
 impl VersionMessage {
+    #[allow(dead_code)]
     pub fn new(
         version: i32,
         service: u64,

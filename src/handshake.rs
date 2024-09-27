@@ -8,10 +8,8 @@ pub enum State {
     Init,
     SendVersion,
     RecvVersion,
-    ValidateVersion,
     SendAck,
     RecvAck,
-    ValidateAck,
     Complete,
 }
 
@@ -34,10 +32,8 @@ impl fmt::Display for State {
             Self::Init => write!(f, "Initial state"),
             Self::SendVersion => write!(f, "Sending Version Message"),
             Self::RecvVersion => write!(f, "Receiving Version Message"),
-            Self::ValidateVersion => write!(f, "Validating Version Message"),
             Self::SendAck => write!(f, "Sending Ack Message"),
             Self::RecvAck => write!(f, "Receiving Ack Message"),
-            Self::ValidateAck => write!(f, "Validating Ack Message"),
             Self::Complete => write!(f, "Handshake completed"),
         }
     }
@@ -110,8 +106,7 @@ impl<'a> Handshake<'a> {
                 self.read_version()?;
                 self.state = State::RecvVersion
             }
-            State::RecvVersion => self.state = State::ValidateVersion,
-            State::ValidateVersion => {
+            State::RecvVersion => {
                 self.send_verack()?;
                 self.state = State::SendAck
             }
@@ -119,9 +114,8 @@ impl<'a> Handshake<'a> {
                 self.read_verack()?;
                 self.state = State::RecvAck
             }
-            State::RecvAck => self.state = State::ValidateAck,
-            State::ValidateAck => self.state = State::Complete,
-            State::Complete => self.state = State::Complete,
+            State::RecvAck => self.state = State::Complete,
+            State::Complete => (),
         }
         Ok(())
     }
