@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, io::Read, io::Write, net::TcpStream};
 
-use crate::message::{serialize_message, Header, MessageError, VersionMessage};
+use crate::message::{serialize_message, Header, MessageError, VerackMessage, VersionMessage};
 
 /// States the handshake goes through (post connection).
 #[derive(Debug, Clone, Copy)]
@@ -26,23 +26,9 @@ impl State {
             _ => return false,
         }
     }
-
-    fn next(&mut self) {
-        match self {
-            Self::Init => *self = Self::SendVersion,
-            Self::SendVersion => *self = Self::RecvVersion,
-            Self::RecvVersion => *self = Self::ValidateVersion,
-            Self::ValidateVersion => *self = Self::SendAck,
-            Self::SendAck => *self = Self::RecvAck,
-            Self::RecvAck => *self = Self::ValidateAck,
-            Self::ValidateAck => *self = Self::Complete,
-            Self::Complete => *self = Self::Complete,
-        };
-    }
 }
 
 impl fmt::Display for State {
-    // relies on the fact that State implements Debug
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Init => write!(f, "Initial state"),
@@ -58,7 +44,7 @@ impl fmt::Display for State {
 }
 
 #[derive(Debug)]
-/// Top level error, injecting state level context.
+/// Top level error, with handshake state context.
 pub enum HandshakeError {
     /// An error that happened at the message layer.
     MessageError(State, MessageError),
@@ -66,7 +52,6 @@ pub enum HandshakeError {
     IOError(State, std::io::Error),
 }
 
-/// Top level error, injecting state level context.
 impl fmt::Display for HandshakeError {
     // NOTE: Relies on the fact that HandshakeError implements Debug
     // and that State implements display.
@@ -81,28 +66,28 @@ impl Error for HandshakeError {}
 
 /// Handshake
 #[derive(Debug)]
-pub struct Handshake {
-    /// The current state
+pub struct Handshake<'a> {
+    /// The current state of the handshake process.
     state: State,
     /// A tcp stream between a local and remote socket
     /// on which the handshake will happen.
-    stream: TcpStream,
+    stream: &'a TcpStream,
 }
 
-impl Handshake {
+impl<'a> Handshake<'a> {
     /// Constructs and initializes the handshake that will be attempted on
     /// the given TcpStream.
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(stream: &'a TcpStream) -> Self {
         let state = State::new();
         Self { state, stream }
     }
 
     /// Attempts to run an handshake to completion.
-    pub fn handshake(&mut self) -> Result<(), HandshakeError> {
+    pub fn process(&mut self) -> Result<(), HandshakeError> {
         while let Some(state_result) = self.next() {
             match state_result {
-                Ok(state) => {
-                    tracing::info!("Reached state: {}", state);
+                Ok(_) => {
+                    tracing::info!("Reached state: {}", self.state);
                 }
                 Err(e) => {
                     return Err(e);
@@ -124,12 +109,40 @@ impl Handshake {
                 self.state = State::RecvVersion
             }
             State::RecvVersion => self.state = State::ValidateVersion,
-            State::ValidateVersion => self.state = State::SendAck,
-            State::SendAck => self.state = State::RecvAck,
+            State::ValidateVersion => {
+                self.send_verack()?;
+                self.state = State::SendAck
+            },
+            State::SendAck => {
+                self.read_verack()?;
+                self.state = State::RecvAck
+            },
             State::RecvAck => self.state = State::ValidateAck,
             State::ValidateAck => self.state = State::Complete,
             State::Complete => self.state = State::Complete,
         }
+        Ok(())
+    }
+
+    fn read_verack(&mut self) -> Result<(), HandshakeError> {
+        let mut header_bytes = [0u8; Header::HEADER_WIDTH];
+
+        self.stream.read_exact(&mut header_bytes)
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
+
+        Ok(())
+    }
+
+    /// Builds and send the "verack" message
+    fn send_verack(&mut self) -> Result<(), HandshakeError> {
+        let verack = VerackMessage;
+
+        let verack_bytes = serialize_message(&verack)
+            .map_err(|err| HandshakeError::MessageError(self.state, err))?;
+
+        self.stream
+            .write_all(&verack_bytes)
+            .map_err(|err| HandshakeError::IOError(self.state, err))?;
         Ok(())
     }
 
@@ -186,7 +199,7 @@ impl Handshake {
 
         let message_width = header.get_payload_size() as usize;
 
-        let mut verack_bytes: Vec<u8> = Vec::with_capacity(message_width);
+        let mut verack_bytes: Vec<u8> = vec![0; message_width];
         self.stream
             .read_exact(&mut verack_bytes[..message_width])
             .map_err(|err| HandshakeError::IOError(self.state, err))?;
@@ -194,19 +207,16 @@ impl Handshake {
     }
 }
 
-// This iterator returns None when the handshake is complete and the current
-// State or error when stepping.
-impl Iterator for Handshake {
-    type Item = Result<State, HandshakeError>;
+// Returns `None` when the handshake is completed.
+impl Iterator for Handshake<'_> {
+    type Item = Result<(), HandshakeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.state.completed() {
             return None;
         }
 
-        // Step
-        // todo: handle the errors here, whenever there's an error here we need to bubble it up.
-        self.step();
-        None
+        // Step in
+        Some(self.step())
     }
 }
