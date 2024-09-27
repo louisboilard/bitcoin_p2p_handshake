@@ -57,8 +57,8 @@ impl fmt::Display for HandshakeError {
     // and that State implements display.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::MessageError(state, err) => write!(f, "Message Error: {} {}", state, err),
-            Self::IOError(state, err) => write!(f, "IO Error: {} {}", state, err),
+            Self::MessageError(state, err) => write!(f, "Message Error: State: {}. err: {}.", state, err),
+            Self::IOError(state, err) => write!(f, "IO Error: State: {}. err: {}.", state, err),
         }
     }
 }
